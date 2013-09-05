@@ -1,0 +1,46 @@
+#!/bin/bash
+NAMED_PIPE="/tmp/jobSequencer"
+
+command=$@
+
+control_c() {
+# run if user hits control-c
+	echo -en " Telling processor to stop\n"
+	echo "exit" >> "$NAMED_PIPE"
+	exit $?
+}
+processor() {
+	while true
+	do
+		if read line <$NAMED_PIPE; then
+			if [[ "$line" == 'exit' ]]; then
+				break
+			elif [[ "$line" != '' ]]; then
+				#run command with args
+				$line
+			fi
+		fi
+		line=""
+	done
+	
+	echo "Reader exiting"
+	rm "$NAMED_PIPE"
+	exit
+}
+writer() {
+	while read line; do
+		echo $command "$line" >> "$NAMED_PIPE"
+	
+		if [[ "$line" == "exit" ]] ; then exit; fi
+	done
+}
+
+
+if [[ ! -p $pipe ]]; then
+    echo "Starting reader (output to jobSeq.out)"
+	mkfifo "$NAMED_PIPE"
+	processor &> jobSeq.out &
+fi
+
+trap control_c SIGINT
+writer
