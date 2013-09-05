@@ -1,0 +1,47 @@
+I'd like to have 2 completely isolated programs eventually. There is only 1 occurence of the processor (queue reader), but no restriction on queuers (queue writters). The pipe behaves as a queue and is first come first serve.
+One is the processor which gets run at startup and simply sits idly and waits for jobs to be written to the queue (the pipe).
+The second program is simply a consil for entering commands which can be run in 2 ways:
+	jobSequencer [options] command [args[]]
+		#simply adds the command to the queue
+	jobSequencer [options] --interactive
+		#opens an interactive terminal which lets you input commands
+		#could eventually allow you to view status and change settings (low priority feature)
+
+I would like the program to have a settings file which allows you to specify multiple queues and the number of slots per queue.
+For example, by default you might have 
+	queue.cpu=4
+	queue.gpu=1
+	queue.net=1
+	queue.hdd=1
+but I also want you to be able to specify additional queues so for example if you had multiple drives you could specify:
+	queue.sda=1
+	queue.sdb=1
+and lastly, there is a default queue. If you run a command and dont specify how the program is bounded. For this you must specify which queues it will occupy.
+	queue.default=cpu,gpu,hdd
+
+There is a single pipe file which items are queued into. Like this:
+	cpu 2 dualThreadCpuProcess
+	cpu 1 singleThreadCpuProcess
+	gpu 1 hdd 1 gpuAndDiskHeavyProcess
+	defaultProcess
+	net 1 networkDownload
+
+The processor behaves strictly as a queue and uses semiphores. If it were processing the above queue (and above slot counts) it would do so as follows:
+	launch dualThreadCpuProcess
+	launch singleThreadCpuProcess
+	launch gpuAndDiskHeavyProcess
+	unable to launch default because no gpu slot available...
+		networkDownload does not get launched yet. It should not do any sort of lookahead even though this process could run
+		Waits until gpuAndDiskHeavyProcess completes
+		then launches gpuAndDiskHeavyProcess
+	lauch networkDownload
+
+
+I'm not sure the exact syntax for queing processes but it might be something like: (-b describes bindings)
+Any binding values which are negative or exceed the max available are treated as allocate all.
+	jobSequencer -b cpu 2 hdd commandToRun args
+or
+	jobSequencer cpu 2 hdd commandToRun args
+or
+	jobSequencer -cpu2 -hdd commandToRun args
+however custom queue names might be weird and may conflict with actual command names. The dash might be a good syntax
