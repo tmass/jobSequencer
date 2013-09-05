@@ -1,21 +1,80 @@
 #!/bin/bash
+
+# changes:
+# renamed control_c to cleanup
+#   not real happy with cleanup either, but function should be named by what
+#   it does, not what calls it.  Anything can call it.
+# added help_text function, prints help text
+#   called if -h passed in
+# $pipe seemed to be improperly used instead of $NAMED_PIPE, only
+#   occured in one [[ ! -p $pipe ]] check
+#   EDIT: You copy pasted from
+#   http://www.linuxjournal.com/content/using-named-pipes-fifos-bash,
+#   didn't you?  Beware the capy paste, you missed some variable refactoring.
+# Now quits if the $NAMED_PIPE already exists - shouldn't overwrite an
+#   existing file without some sort of --force option
+# If user exits while reader is still going (command is taking too long),
+#   Now we ask the user if they want to wait, quit and leave reader running,
+#   or quit and kill the reader
+# Added options described in help_text
+
 NAMED_PIPE="/tmp/jobSequencer"
+OUTFILE="jobSeq.out"
+FORCE=false
 
-command=$@
+name=`basename $0`
 
-control_c() {
-# run if user hits control-c
-	echo -en " Telling processor to stop\n"
-	echo "exit" >> "$NAMED_PIPE"
+function help_text() {
+    echo "$name: a job sequencer that uses named pipes"
+    echo "Usage: $name [ options ]"
+    echo "Options: -f           forces pipe creation even if file exists"
+    echo "         -p filename  specify a non-default pipe file"
+    echo "         -o filename  specify an output file for the reader"
+    echo "         -h           displays this help text"
+}
+
+function cleanup() {
+	echo "Telling reader to stop."
+	echo "exit" >> "$NAMED_PIPE" &
+    sleep 1 #give reader a chance to exit if it is done executing commands
+    if [ ! "$(ps -p $processor_PID -o comm=)" == $(echo "$name" | cut -c1-15) ]; then
+        exit $?
+    fi
+
+    PS3='Please enter your choice: '
+    options=("Wait for reader to stop" "Exit and let reader continue in background" "Exit and kill reader")
+    select opt in "${options[@]}"
+    do
+        # user may have taken significant time, check for process still existing again to prevent needless errors
+        if [ ! "$(ps -p $processor_PID -o comm=)" == $(echo "$name" | cut -c1-15) ]; then
+            exit $?
+        fi
+        case $REPLY in
+            "1")
+                wait $processor_PID
+                break
+                ;;
+            "2")
+                break
+                ;;
+            "3")
+                kill $processor_PID
+                break
+                ;;
+            *) echo "invalid option";;
+        esac
+    done
 	exit $?
 }
-processor() {
+function processor() {
+    echo "Reader starting."
 	while true
 	do
 		if read line <$NAMED_PIPE; then
 			if [[ "$line" == 'exit' ]]; then
 				break
 			elif [[ "$line" != '' ]]; then
+                echo -e "Executing:\n\t$line"
 				#run command with args
 				$line
 			fi
@@ -23,24 +82,57 @@ processor() {
 		line=""
 	done
 	
-	echo "Reader exiting"
-	rm "$NAMED_PIPE"
+	echo "Reader exiting."
+
+    rm -f $NAMED_PIPE
 	exit
 }
-writer() {
+function writer() {
 	while read line; do
-		echo $command "$line" >> "$NAMED_PIPE"
-	
-		if [[ "$line" == "exit" ]] ; then exit; fi
+		if [[ "$line" == "exit" ]] ; then cleanup; fi
+		echo "$line" >> "$NAMED_PIPE" &
 	done
 }
 
+while getopts hfo:p: opt; do
+    case $opt in
+        "f")
+            FORCE=true
+            ;;
+        "o")
+            OUTFILE="$OPTARG"
+            ;;
+        "p")
+            NAMED_PIPE="$OPTARG"
+            ;;
+        "h")
+            help_text
+            exit 1
+            ;;
+        \?)
+            exit 1
+            ;;
+        :)
+            exit 1
+            ;;
+    esac
+done
 
-if [[ ! -p $pipe ]]; then
-    echo "Starting reader (output to jobSeq.out)"
-	mkfifo "$NAMED_PIPE"
-	processor &> jobSeq.out &
+if [[ -e $NAMED_PIPE ]]; then
+    if ! $FORCE; then
+        echo "Pipe already exists, exiting. Use -f to force."
+        exit 1
+    else
+        echo "-f option supplied, overwriting existing fifo."
+        rm -f "$NAMED_PIPE"
+    fi
+
 fi
 
-trap control_c SIGINT
+mkfifo "$NAMED_PIPE"
+echo "Starting reader (output to $OUTFILE)"
+processor &> $OUTFILE &
+processor_PID=$!
+
+trap cleanup SIGINT
 writer
