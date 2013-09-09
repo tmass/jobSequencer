@@ -24,6 +24,8 @@ FORCE=false
 
 name=`basename $0`
 
+command="$@"
+
 function help_text() {
     echo "$name: a job sequencer that uses named pipes"
     echo "Usage: $name [ options ]"
@@ -90,7 +92,7 @@ function processor() {
 function writer() {
 	while read line; do
 		if [[ "$line" == "exit" ]] ; then cleanup; fi
-		echo "$line" >> "$NAMED_PIPE" &
+		echo "$command" "$line" >> "$NAMED_PIPE" &
 	done
 }
 
